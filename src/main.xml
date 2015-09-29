@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+
+Ship IoT with Kinoma Create, PubNub, and Texas Instruments
+
+Copyright (c) 2015 wot.io, Inc. All Rights Reserved.
+
+by Aaron Kondziela
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Configure front pins as follows:
+  51: Power
+  52: Analog
+  53: Ground
+  Left bank: 3.3v
+
+Designed for use with a Texas Instruments LM35 precision centigrade
+temperature sensor, with analog 10mV/ºC output into pin 52.
+
+-->
+
+<program xmlns="http://www.kinoma.com/kpr/1">
+	<include path="pubnub.js"/>
+	
+	<!-- CONFIGURATION VARS HERE ============================================================ -->
+	<variable id="PUBNUB_PUBLISH_KEY" value="'YOUR_PUB_KEY_HERE'"   />
+	<variable id="PUBNUB_SUBSCRIBE_KEY" value="'YOUR_SUB_KEY_HERE'" />
+	<variable id="PUBNUB_CHANNEL" value="'YOUR_CHANNEL_NAME_HERE'" />;
+	<!-- END CONFIGURATION ================================================================== -->
+	
+	<variable id="receivedCount" value="0" ></variable>
+	
+	<behavior id="ApplicationBehavior" like="PubNubBehavior">
+		<method id="constructor" params="content,data"><![CDATA[
+			PubNubBehavior.call(this, content, data);
+		]]></method>
+		<method id="onLaunch" params="application"><![CDATA[
+
+		pubnub = PUBNUB.init({
+			publish_key: PUBNUB_PUBLISH_KEY,
+			subscribe_key: PUBNUB_SUBSCRIBE_KEY
+		});
+		pubnub.subscribe({
+			channel : PUBNUB_CHANNEL,
+			message : function(message, env, channel) {
+                maincontainer.receivedMessage.string = JSON.stringify(message);
+                maincontainer.receivedLabel.string = "Last received (" + ++receivedCount + "):";
+			},
+			connect: function pub() {
+                /*
+                    We're connected! Send a message.
+                */
+				pubnub.publish({                                     
+					channel : PUBNUB_CHANNEL,
+					message : "Hello from wotio kinoma pubnub temperature demo!"
+				});
+			}
+		 });
+		 
+		application.invoke( new MessageWithObject( "pins:configure", {
+        	analogSensor: {
+                require: "analog",
+                pins: {
+                    analogTemp: { pin: 52 }
+                }
+            }
+        } ) );
+    	
+    	
+    	/* Use the initialized analogSensor object and repeatedly 
+    	   call its read method with a given interval.  */
+		application.invoke( new MessageWithObject( "pins:/analogSensor/read?" + 
+            serializeQuery( {       
+				repeat: "on",
+				interval: 500,
+				callback: "/gotAnalogResult"
+        } ) ) );
+
+		
+		]]></method>
+	</behavior>
+
+    <handler path="/gotAnalogResult">
+    	<behavior>
+    		<method id="onInvoke" params="handler, message"><![CDATA[
+                var result = message.requestObject;
+                // Convert voltage result to temperature
+            	// LM35 is 10mV/ªC output; analog input is 0-1 for 0-3.3v (or 5 if set)
+            	// Subtract 1 degree for self-heating
+                var temp = (result * 3.3 * 100) - 1;
+        		application.distribute( "onTempValueChanged", temp.toFixed(2) );
+        		application.distribute( "onAnalogValueChanged", result );
+        		pubnub.publish({channel:PUBNUB_CHANNEL, message:
+       	 			{"k1-fd3b584da918": {"meta": "dont care", "tlv": [ {"name": "temperature", "value": temp.toFixed(2), "units": "C"} ] }}
+        		});
+            ]]></method>
+        </behavior>
+    </handler>
+    
+    <container id="MainContainer" top="0" left="0" bottom="0" right="0">
+        <skin color="white"/>
+        
+        <label left="5" top="0" string="'PubNub Temperature Telemetry Demo'">
+ 			<style font="24px" color="red"/>
+        </label>
+        
+        <label left="5" top="23" string="'Last Received (0):'" name="receivedLabel">
+        	<style font="20px" color="blue"/>
+        </label>
+        
+        <label left="5" top="39" string="'--no message received yet--'" name="receivedMessage">
+        	<style font="14px" color="black"/>
+        </label>
+        
+        <label left="0" right="0" top="80" string="'- - -'">
+            <style font="60px" color="black"/>
+            <behavior>
+            	<method id="onTempValueChanged" params="content,result"><![CDATA[
+                    content.string = "Temp: " + result + " ºC";
+                ]]></method>
+			</behavior>
+        </label>
+        
+        <label left="0" right="0" top="65" string="'- - -'">
+        	<style font="24px" color="green"/>
+        	<behavior>
+        		<method id="onAnalogValueChanged" params="content,result"><![CDATA[
+        			content.string = result.toFixed(6) + " raw analog pin value";
+        		]]></method>
+        	</behavior>
+        </label>
+        
+        <picture url="'./assets/wotio_logo_500x120.png'" top="210" left="10" height="24" width="100" />
+        
+    </container>
+	
+    <script>
+        <![CDATA[
+    	application.behavior = new ApplicationBehavior(application, {});   	 
+		application.add( maincontainer = new MainContainer() );
+        ]]>
+    </script>
+</program>
